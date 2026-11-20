@@ -1,5 +1,14 @@
 apply plugin: 'com.android.application'
 
+// Load release signing credentials. Environment variables take precedence over
+// keystore.properties so CI can inject secrets without committing them.
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+def env = System.getenv()
+
 android {
     ndkVersion = "28.2.13676358"
 
@@ -32,6 +41,15 @@ android {
 
     signingConfigs {
         release {
+            // Use a fixed keystore so every release build is signed with the
+            // same certificate. Env vars override keystore.properties, which
+            // lets CI inject real secrets if desired.
+            storeFile rootProject.file(
+                env['RELEASE_STORE_FILE'] ?: keystoreProps.getProperty('storeFile', 'app/release.keystore'))
+            storePassword env['RELEASE_STORE_PASSWORD'] ?: keystoreProps.getProperty('storePassword', '')
+            keyAlias env['RELEASE_KEY_ALIAS'] ?: keystoreProps.getProperty('keyAlias', '')
+            keyPassword env['RELEASE_KEY_PASSWORD'] ?: keystoreProps.getProperty('keyPassword', '')
+
             // NOTE: v1 is still needed, as v2 is only supported since API 24
             enableV1Signing true
             enableV2Signing true
