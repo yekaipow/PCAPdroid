@@ -31,6 +31,7 @@ import androidx.annotation.NonNull;
 import androidx.preference.PreferenceManager;
 
 import com.emanuelef.remote_capture.activities.ErrorActivity;
+import com.emanuelef.remote_capture.mcp.McpService;
 import com.emanuelef.remote_capture.model.Blocklist;
 import com.emanuelef.remote_capture.model.CtrlPermissions;
 import com.emanuelef.remote_capture.model.MatchList;
@@ -124,6 +125,10 @@ public class PCAPdroid extends Application {
 
         if(!isUnderTest())
             mGeoDbUpdater.start();
+
+        // Start the MCP server if it was enabled by the user
+        if(!isUnderTest() && McpService.isEnabled(this))
+            McpService.start(this);
     }
 
     public static @NonNull PCAPdroid getInstance() {

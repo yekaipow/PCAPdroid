@@ -42,6 +42,8 @@ You can test the latest features before the official release by adding the [Beta
 
 Check out the [quick start instructions](https://emanuele-f.github.io/PCAPdroid/quick_start) or the full [User Guide](https://emanuele-f.github.io/PCAPdroid).
 
+AI tools can control the capture and inspect traffic through the optional [MCP server](docs/mcp_server.md).
+
 ## Sponsors
 
 The PCAPdroid project is sponsored by [AVEQ GmbH](https://aveq.info).

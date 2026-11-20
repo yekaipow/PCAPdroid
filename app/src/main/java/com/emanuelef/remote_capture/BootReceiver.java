@@ -28,6 +28,7 @@ import android.net.VpnService;
 import androidx.core.content.ContextCompat;
 import androidx.preference.PreferenceManager;
 
+import com.emanuelef.remote_capture.mcp.McpService;
 import com.emanuelef.remote_capture.model.CaptureSettings;
 import com.emanuelef.remote_capture.model.Prefs;
 
@@ -44,6 +45,10 @@ public class BootReceiver extends BroadcastReceiver {
             Log.w(TAG, "Unexpected action: " + action);
             return;
         }
+
+        // Start the MCP server at boot if enabled (independent of capture-at-boot)
+        if(McpService.isEnabled(context))
+            McpService.start(context);
 
         if(!Prefs.startAtBoot(prefs))
             return;

@@ -61,6 +61,7 @@ import com.emanuelef.remote_capture.fragments.prefs.DnsSettings;
 import com.emanuelef.remote_capture.fragments.prefs.GeoipSettings;
 import com.emanuelef.remote_capture.fragments.prefs.Socks5Settings;
 import com.emanuelef.remote_capture.interfaces.FragmentViewCreatedListener;
+import com.emanuelef.remote_capture.mcp.McpService;
 import com.emanuelef.remote_capture.model.Prefs;
 import com.emanuelef.remote_capture.R;
 
@@ -210,6 +211,7 @@ public class SettingsActivity extends BaseActivity implements PreferenceFragment
 
             setupExporterPrefs();
             setupHttpServerPrefs();
+            setupMcpPrefs();
             setupTrafficInspectionPrefs();
             setupCapturePrefs();
             setupSecurityPrefs();
@@ -287,6 +289,39 @@ public class SettingsActivity extends BaseActivity implements PreferenceFragment
             /* HTTP Server port validation */
             EditTextPreference mHttpServerPort = requirePreference(Prefs.PREF_HTTP_SERVER_PORT);
             mHttpServerPort.setOnPreferenceChangeListener((preference, newValue) -> Utils.validatePort(newValue.toString()));
+        }
+
+        private void setupMcpPrefs() {
+            Preference.OnPreferenceChangeListener restartServer = (preference, newValue) -> {
+                if(McpService.isEnabled(requireContext())) {
+                    McpService.stop(requireContext());
+                    McpService.start(requireContext());
+                }
+                return true;
+            };
+
+            /* Port: validate and restart the server so the new port is applied */
+            EditTextPreference mcpPort = requirePreference(Prefs.PREF_MCP_PORT);
+            mcpPort.setOnPreferenceChangeListener((preference, newValue) -> {
+                if(!Utils.validatePort(newValue.toString()))
+                    return false;
+                restartServer.onPreferenceChange(preference, newValue);
+                return true;
+            });
+
+            /* Start/stop the MCP server when toggled */
+            SwitchPreference mcpEnabled = requirePreference(Prefs.PREF_MCP_ENABLED);
+            mcpEnabled.setOnPreferenceChangeListener((preference, newValue) -> {
+                boolean enabled = (Boolean) newValue;
+                if(enabled)
+                    McpService.start(requireContext());
+                else
+                    McpService.stop(requireContext());
+                return true;
+            });
+
+            requirePreference(Prefs.PREF_MCP_BIND_ALL).setOnPreferenceChangeListener(restartServer);
+            requirePreference(Prefs.PREF_MCP_TOKEN).setOnPreferenceChangeListener(restartServer);
         }
 
         private boolean rootCaptureEnabled() {

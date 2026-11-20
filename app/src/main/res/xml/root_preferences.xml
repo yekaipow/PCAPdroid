@@ -200,6 +200,36 @@
         </Preference>
     </PreferenceCategory>
 
+    <PreferenceCategory app:title="@string/mcp_server" app:iconSpaceReserved="false" app:key="mcp_server">
+        <SwitchPreference
+            app:key="mcp_server_enabled"
+            app:title="@string/mcp_server_enable"
+            app:summary="@string/mcp_server_summary"
+            app:iconSpaceReserved="false"
+            app:defaultValue="false" />
+
+        <EditTextPreference
+            app:key="mcp_server_port"
+            app:title="@string/mcp_server_port"
+            app:defaultValue="8081"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
+        <SwitchPreference
+            app:key="mcp_server_bind_all"
+            app:title="@string/mcp_server_bind_all"
+            app:summary="@string/mcp_server_bind_all_summary"
+            app:iconSpaceReserved="false"
+            app:defaultValue="false" />
+
+        <EditTextPreference
+            app:key="mcp_server_token"
+            app:title="@string/mcp_server_token"
+            app:summary="@string/mcp_server_token_summary"
+            app:iconSpaceReserved="false"
+            app:defaultValue="" />
+    </PreferenceCategory>
+
     <PreferenceCategory app:title="@string/other_prefs" app:iconSpaceReserved="false" >
         <DropDownPreference
             app:key="app_language"

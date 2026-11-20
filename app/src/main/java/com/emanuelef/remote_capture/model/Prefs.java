@@ -125,6 +125,10 @@ public class Prefs {
     public static final String PREF_GEO_DB_NEXT_UPDATE = "geo_db_next_update";
     public static final String PREF_AVAILABLE_SKUS = "available_skus";
     public static final String PREF_UNLOCK_TOKEN = "unlock_token";
+    public static final String PREF_MCP_ENABLED = "mcp_server_enabled";
+    public static final String PREF_MCP_PORT = "mcp_server_port";
+    public static final String PREF_MCP_BIND_ALL = "mcp_server_bind_all";
+    public static final String PREF_MCP_TOKEN = "mcp_server_token";
 
     /* The default maximum connections to log into the ConnectionsRegister. Older connections are dropped.
      * Average Java-heap cost is ~2 KB per connection (covers payload-minimal mode and possible new additions);
@@ -282,6 +286,13 @@ public class Prefs {
     public static String getDnsServerV6(SharedPreferences p)    { return(p.getString(PREF_DNS_SERVER_V6, "2620:fe::10")); }
     public static boolean isIgnoredMitmVersion(SharedPreferences p, String v) { return p.getString(PREF_IGNORED_MITM_VERSION, "").equals(v); }
     public static String getApiKey(SharedPreferences p)         { return(p.getString(PREF_API_KEY, "")); }
+    public static boolean isMcpServerEnabled(SharedPreferences p) { return(p.getBoolean(PREF_MCP_ENABLED, false)); }
+    public static int getMcpServerPort(SharedPreferences p)      {
+        try { return(Integer.parseInt(p.getString(PREF_MCP_PORT, "8081"))); }
+        catch(Exception e) { return(8081); }
+    }
+    public static boolean isMcpServerBindAll(SharedPreferences p) { return(p.getBoolean(PREF_MCP_BIND_ALL, false)); }
+    public static String getMcpServerToken(SharedPreferences p)  { return(p.getString(PREF_MCP_TOKEN, "")); }
     public static String getFilenamePrefix(SharedPreferences p)     { return(p.getString(PREF_FILENAME_PREFIX, "PCAPdroid_")); }
     public static boolean localNetworkNoticeShown(SharedPreferences p)      { return(p.getBoolean(PREF_LOCAL_NETWORK_NOTICE_SHOWN, false)); }
     public static boolean isGeoDbAutoUpdateEnabled(SharedPreferences p)     { return(p.getBoolean(PREF_GEO_DB_AUTO_UPDATE, false)); }
