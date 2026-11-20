@@ -36,6 +36,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -55,7 +58,13 @@ public class McpServer implements Runnable {
     private static final String TAG = "McpServer";
     private static final String MCP_PATH = "/mcp";
     private static final String HEALTH_PATH = "/health";
-    private static final String PROTOCOL_VERSION = "2024-11-05";
+    // The newest protocol version this server speaks (Streamable HTTP transport).
+    private static final String PROTOCOL_VERSION = "2025-03-26";
+    // Protocol versions we accept from clients during initialization.
+    private static final String[] SUPPORTED_VERSIONS = {
+            "2025-06-18", "2025-03-26", "2024-11-05"
+    };
+    private static final String HEADER_SESSION_ID = "Mcp-Session-Id";
     private static final int MAX_CLIENTS = 8;
     private static final int MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 
@@ -69,6 +78,8 @@ public class McpServer implements Runnable {
     private volatile boolean mRunning;
     private Thread mThread;
     private ExecutorService mPool;
+    // Track issued session ids so we can accept them on subsequent requests.
+    private final Map<String, Boolean> mSessions = new ConcurrentHashMap<>();
 
     public McpServer(Context context, int port, boolean bindAll, String token) {
         mContext = context.getApplicationContext();
@@ -175,6 +186,9 @@ public class McpServer implements Runnable {
 
                 // Read headers
                 String auth = null;
+                String sessionId = null;
+                String protocolVersion = null;
+                boolean expectContinue = false;
                 int contentLength = 0;
                 String line;
                 while((line = readLine(in)) != null && !line.isEmpty()) {
@@ -185,11 +199,25 @@ public class McpServer implements Runnable {
                     String value = line.substring(colon + 1).trim();
                     if(name.equalsIgnoreCase("Authorization"))
                         auth = value;
+                    else if(name.equalsIgnoreCase(HEADER_SESSION_ID))
+                        sessionId = value;
+                    else if(name.equalsIgnoreCase("MCP-Protocol-Version"))
+                        protocolVersion = value;
+                    else if(name.equalsIgnoreCase("Expect") && value.equalsIgnoreCase("100-continue"))
+                        expectContinue = true;
                     else if(name.equalsIgnoreCase("Content-Length")) {
                         try {
                             contentLength = Integer.parseInt(value);
                         } catch(NumberFormatException ignored) {}
                     }
+                }
+
+                // Honour "Expect: 100-continue": tell the client to send the body.
+                // Without this, strict HTTP clients wait for the interim response
+                // and eventually time out before ever sending the JSON-RPC payload.
+                if(expectContinue) {
+                    out.write("HTTP/1.1 100 Continue\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                    out.flush();
                 }
 
                 // Authentication
@@ -202,12 +230,35 @@ public class McpServer implements Runnable {
                     }
                 }
 
+                // Validate a session id supplied on a non-initialize request
+                if(sessionId != null && !mSessions.containsKey(sessionId)) {
+                    // The session is unknown/expired: ask the client to start a new one
+                    sendResponse(out, 404, "Not Found", "text/plain", "Session not found");
+                    return;
+                }
+
                 if(method.equals("GET") && url.equals(HEALTH_PATH)) {
                     JsonObject health = new JsonObject();
                     health.addProperty("status", "ok");
                     health.addProperty("server", "pcapdroid-mcp");
                     health.addProperty("version", BuildConfig.VERSION_NAME);
                     sendResponse(out, 200, "OK", "application/json", health.toString());
+                    return;
+                }
+
+                // Streamable HTTP: GET on the MCP endpoint offers an SSE stream.
+                // We don't push server-initiated messages, so report 405 as allowed by the spec.
+                if(method.equals("GET") && url.equals(MCP_PATH)) {
+                    sendResponse(out, 405, "Method Not Allowed", "text/plain",
+                            "This server does not offer an SSE stream");
+                    return;
+                }
+
+                // A client may explicitly terminate its session with DELETE.
+                if(method.equals("DELETE") && url.equals(MCP_PATH)) {
+                    if(sessionId != null)
+                        mSessions.remove(sessionId);
+                    sendResponse(out, 204, "No Content", null, null);
                     return;
                 }
 
@@ -231,9 +282,16 @@ public class McpServer implements Runnable {
                 }
 
                 String requestBody = new String(body, 0, read, StandardCharsets.UTF_8);
-                String response = handleJsonRpc(requestBody);
+                boolean isInitialize = requestBody.contains("\"initialize\"");
+                String newSession = null;
+                if(isInitialize) {
+                    newSession = UUID.randomUUID().toString();
+                    mSessions.put(newSession, Boolean.TRUE);
+                }
+
+                String response = handleJsonRpc(requestBody, protocolVersion);
                 if(response != null)
-                    sendResponse(out, 200, "OK", "application/json", response);
+                    sendResponse(out, 200, "OK", "application/json", response, newSession);
                 else
                     // Notifications have no response body
                     sendResponse(out, 202, "Accepted", null, null);
@@ -245,11 +303,36 @@ public class McpServer implements Runnable {
         }
     }
 
-    /* Handles a JSON-RPC 2.0 message. Returns null for notifications. */
-    private String handleJsonRpc(String body) {
-        JsonObject response;
+    /* Handles a JSON-RPC 2.0 body: a single message or a batch array.
+     * Returns null only when all messages are notifications (no response body). */
+    private String handleJsonRpc(String body, String headerProtocolVersion) {
         try {
             JsonElement parsed = JsonParser.parseString(body);
+            if(parsed.isJsonArray()) {
+                com.google.gson.JsonArray batch = parsed.getAsJsonArray();
+                if(batch.size() == 0)
+                    return jsonRpcError(null, -32600, "Invalid Request: empty batch");
+
+                com.google.gson.JsonArray responses = new com.google.gson.JsonArray();
+                for(JsonElement element : batch) {
+                    String r = handleSingle(element, headerProtocolVersion);
+                    if(r != null)
+                        responses.add(JsonParser.parseString(r));
+                }
+                // Only notifications in the batch -> no response at all
+                return responses.size() == 0 ? null : responses.toString();
+            }
+            return handleSingle(parsed, headerProtocolVersion);
+        } catch(Exception e) {
+            Log.e(TAG, "JSON-RPC error: " + e);
+            return jsonRpcError(null, -32700, "Parse error: " + e.getLocalizedMessage());
+        }
+    }
+
+    /* Handles a single JSON-RPC message. Returns null for notifications. */
+    private String handleSingle(JsonElement parsed, String headerProtocolVersion) {
+        JsonObject response;
+        try {
             if(!parsed.isJsonObject())
                 return jsonRpcError(null, -32600, "Invalid Request");
 
@@ -264,7 +347,7 @@ public class McpServer implements Runnable {
             JsonObject params = (req.has("params") && req.get("params").isJsonObject())
                     ? req.get("params").getAsJsonObject() : new JsonObject();
 
-            JsonObject result = dispatch(method, params);
+            JsonObject result = dispatch(method, params, headerProtocolVersion);
             if(result == null) {
                 // unknown method
                 return jsonRpcError(id, -32601, "Method not found: " + method);
@@ -284,11 +367,31 @@ public class McpServer implements Runnable {
         }
     }
 
-    private JsonObject dispatch(String method, JsonObject params) {
+    private JsonObject dispatch(String method, JsonObject params, String headerProtocolVersion) {
         switch(method) {
             case "initialize": {
+                // Echo back a version the client supports. Modern clients reject a
+                // mismatched/obsolete version and may then hang waiting for a legacy
+                // SSE endpoint. Prefer the version requested in the params, then the
+                // MCP-Protocol-Version header, falling back to our latest.
+                String requested = null;
+                if(params.has("protocolVersion") && params.get("protocolVersion").isJsonPrimitive())
+                    requested = params.get("protocolVersion").getAsString();
+                if(requested == null)
+                    requested = headerProtocolVersion;
+
+                String negotiated = PROTOCOL_VERSION;
+                if(requested != null) {
+                    for(String supported : SUPPORTED_VERSIONS) {
+                        if(supported.equals(requested)) {
+                            negotiated = requested;
+                            break;
+                        }
+                    }
+                }
+
                 JsonObject result = new JsonObject();
-                result.addProperty("protocolVersion", PROTOCOL_VERSION);
+                result.addProperty("protocolVersion", negotiated);
                 JsonObject capabilities = new JsonObject();
                 capabilities.add("tools", new JsonObject());
                 result.add("capabilities", capabilities);
@@ -352,18 +455,25 @@ public class McpServer implements Runnable {
 
     private static void sendResponse(OutputStream out, int code, String reason,
                                      String contentType, String body) throws IOException {
+        sendResponse(out, code, reason, contentType, body, null);
+    }
+
+    private static void sendResponse(OutputStream out, int code, String reason,
+                                     String contentType, String body, String sessionId) throws IOException {
         byte[] bodyBytes = (body != null) ? body.getBytes(StandardCharsets.UTF_8) : new byte[0];
         StringBuilder header = new StringBuilder();
         header.append("HTTP/1.1 ").append(code).append(" ").append(reason).append("\r\n");
         if(contentType != null)
             header.append("Content-Type: ").append(contentType).append("; charset=utf-8\r\n");
         header.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
+        if(sessionId != null)
+            header.append(HEADER_SESSION_ID).append(": ").append(sessionId).append("\r\n");
         header.append("Connection: close\r\n");
         header.append("\r\n");
         out.write(header.toString().getBytes(StandardCharsets.US_ASCII));
         if(bodyBytes.length > 0) {
             out.write(bodyBytes);
-            out.flush();
         }
+        out.flush();
     }
 }
